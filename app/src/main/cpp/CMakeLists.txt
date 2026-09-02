@@ -3,14 +3,19 @@ project("whispersubtitles" C CXX)
 
 set(WHISPER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/whisper.cpp)
 
-# Definitions
+# Core Definitions
 add_definitions(-D_GNU_SOURCE)
 add_definitions(-DWHISPER_VERSION="1.7.4")
 add_definitions(-DGGML_VERSION="1.0.0")
 add_definitions(-DGGML_COMMIT="master")
 
-# Enable Vulkan GPU backend in whisper.cpp / ggml
-set(GGML_VULKAN ON CACHE BOOL "" FORCE)
+# ARM64 Hardware Acceleration (NEON + FP16 SIMD)
+if(${ANDROID_ABI} STREQUAL "arm64-v8a")
+    add_compile_options(-O3 -flto -march=armv8-a+simd+fp16)
+endif()
+
+# Build options
+set(GGML_VULKAN OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_SERVER OFF CACHE BOOL "" FORCE)
@@ -28,11 +33,9 @@ target_include_directories(whispersubtitles PRIVATE
 )
 
 find_library(log-lib log)
-find_library(vulkan-lib vulkan)
 
 target_link_libraries(whispersubtitles
     whisper
     android
-    ${vulkan-lib}
     ${log-lib}
 )
