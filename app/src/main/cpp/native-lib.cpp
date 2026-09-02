@@ -58,6 +58,7 @@ std::string format_time_srt(int64_t t) {
     return ss.str();
 }
 
+// /sdcard/whisper ke models scan karna
 extern "C" JNIEXPORT jobjectArray JNICALL
 Java_com_example_whispersubtitles_WhisperEngine_listSdcardModels(
         JNIEnv* env, jobject thiz) {
@@ -87,6 +88,7 @@ Java_com_example_whispersubtitles_WhisperEngine_listSdcardModels(
     return array;
 }
 
+// /sdcard/whisper se whisper model memory me load karna
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_example_whispersubtitles_WhisperEngine_loadModelFromSdcard(
         JNIEnv* env, jobject thiz, jstring model_name_str, jobject callback) {
@@ -106,7 +108,7 @@ Java_com_example_whispersubtitles_WhisperEngine_loadModelFromSdcard(
 
     struct stat buffer;
     if (stat(full_path.c_str(), &buffer) != 0) {
-        send_native_log(("File not accessible: " + full_path).c_str());
+        send_native_log(("Model file not accessible at: " + full_path).c_str());
         return JNI_FALSE;
     }
 
@@ -116,15 +118,14 @@ Java_com_example_whispersubtitles_WhisperEngine_loadModelFromSdcard(
     }
 
     struct whisper_context_params cparams = whisper_context_default_params();
-    // GPU ON
-    cparams.use_gpu = true;
-    cparams.flash_attn = true;
+    cparams.use_gpu = false;
 
     g_ctx = whisper_init_from_file_with_params(full_path.c_str(), cparams);
 
     return g_ctx != nullptr;
 }
 
+// Chunk data ko decode karke SRT string me convert karna
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_example_whispersubtitles_WhisperEngine_transcribeToSrt(
         JNIEnv* env, jobject thiz, jfloatArray audio_data, jint num_threads) {
@@ -139,8 +140,8 @@ Java_com_example_whispersubtitles_WhisperEngine_transcribeToSrt(
     wparams.print_realtime = false;
     wparams.print_timestamps = false;
     
-    // Performance tuning
-    wparams.n_threads = num_threads > 0 ? num_threads : 4;
+    // CPU load aur heat balance ke liye 4 threads max
+    wparams.n_threads = (num_threads > 0 && num_threads <= 4) ? num_threads : 4;
     wparams.no_context = true;
     wparams.single_segment = false;
     wparams.max_tokens = 64;
