@@ -1,7 +1,11 @@
 package com.example.whispersubtitles
 
+import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.Settings
 import android.view.View
 import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
@@ -11,17 +15,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.FileOutputStream
-import java.net.URL
 
 class MainActivity : AppCompatActivity(), WhisperCallback {
 
     private val whisper = WhisperEngine()
     private var selectedMediaUri: Uri? = null
-    private var activeModelFile: File? = null
+    private var selectedModelName: String? = null
 
     private lateinit var modelSpinner: Spinner
-    private lateinit var btnDownload: Button
+    private lateinit var btnReload: Button
     private lateinit var btnPickMedia: Button
     private lateinit var btnTranscribe: Button
     private lateinit var progressBar: ProgressBar
@@ -30,16 +32,10 @@ class MainActivity : AppCompatActivity(), WhisperCallback {
     private lateinit var consoleScroll: ScrollView
     private lateinit var tvSrtResult: TextView
 
-    private val models = mapOf(
-        "Tiny (75MB)" to "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
-        "Base (142MB)" to "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
-        "Small (466MB)" to "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
-    )
-
     private val mediaPicker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
             selectedMediaUri = uri
-            btnTranscribe.isEnabled = activeModelFile?.exists() == true
+            btnTranscribe.isEnabled = selectedModelName != null
             appendConsole("Media selected: $uri")
         }
     }
@@ -49,7 +45,7 @@ class MainActivity : AppCompatActivity(), WhisperCallback {
         setContentView(R.layout.activity_main)
 
         modelSpinner = findViewById(R.id.modelSpinner)
-        btnDownload = findViewById(R.id.btnDownloadModel)
+        btnReload = findViewById(R.id.btnDownloadModel)
         btnPickMedia = findViewById(R.id.btnPickMedia)
         btnTranscribe = findViewById(R.id.btnTranscribe)
         progressBar = findViewById(R.id.progressBar)
@@ -58,87 +54,109 @@ class MainActivity : AppCompatActivity(), WhisperCallback {
         consoleScroll = findViewById(R.id.consoleScroll)
         tvSrtResult = findViewById(R.id.tvSrtResult)
 
-        val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, models.keys.toList())
-        modelSpinner.adapter = adapter
+        btnReload.text = "RELOAD"
 
-        btnPickMedia.setOnClickListener { mediaPicker.launch("*/*") }
-        btnDownload.setOnClickListener { downloadSelectedModel() }
-        btnTranscribe.setOnClickListener { startTranscriptionPipeline() }
+        checkStoragePermission()
+        loadSdcardModels()
+
+        btnReload.setOnClickListener {
+            checkStoragePermission()
+            loadSdcardModels()
+        }
+
+        btnPickMedia.setOnClickListener {
+            mediaPicker.launch("*/*")
+        }
+
+        btnTranscribe.setOnClickListener {
+            startTranscription()
+        }
     }
 
-    private fun downloadSelectedModel() {
-        val selectedKey = modelSpinner.selectedItem.toString()
-        val url = models[selectedKey] ?: return
-        val filename = url.substringAfterLast("/")
-        val targetFile = File(filesDir, filename)
-
-        btnDownload.isEnabled = false
-        tvProgress.text = "Downloading $filename..."
-
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                URL(url).openStream().use { input ->
-                    FileOutputStream(targetFile).use { output ->
-                        input.copyTo(output)
-                    }
+    private fun checkStoragePermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (!Environment.isExternalStorageManager()) {
+                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                    data = Uri.parse("package:$packageName")
                 }
-                activeModelFile = targetFile
-                withContext(Dispatchers.Main) {
-                    tvProgress.text = "Downloaded: $filename"
-                    btnDownload.isEnabled = true
-                    btnTranscribe.isEnabled = selectedMediaUri != null
-                    appendConsole("Model ready: ${targetFile.absolutePath}")
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    tvProgress.text = "Download Failed: ${e.message}"
-                    btnDownload.isEnabled = true
-                }
+                startActivity(intent)
             }
         }
     }
 
-    private fun startTranscriptionPipeline() {
+    private fun loadSdcardModels() {
+        // Ensure directory exists on sdcard
+        val dir = File("/sdcard/whisper")
+        if (!dir.exists()) dir.mkdirs()
+
+        // Native C++ function directly calls opendir("/sdcard/whisper")
+        val models = whisper.listSdcardModels()
+
+        if (models.isEmpty()) {
+            tvProgress.text = "No models found in /sdcard/whisper/"
+            appendConsole("Put ggml-*.bin inside /sdcard/whisper/ and tap RELOAD")
+            modelSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, listOf("Empty: /sdcard/whisper"))
+            selectedModelName = null
+            btnTranscribe.isEnabled = false
+            return
+        }
+
+        modelSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, models)
+        modelSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                selectedModelName = models[position]
+                tvProgress.text = "Selected: $selectedModelName"
+                btnTranscribe.isEnabled = selectedMediaUri != null
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+        selectedModelName = models[0]
+        tvProgress.text = "Found ${models.size} model(s) in /sdcard/whisper"
+        btnTranscribe.isEnabled = selectedMediaUri != null
+    }
+
+    private fun startTranscription() {
         val uri = selectedMediaUri ?: return
-        val model = activeModelFile ?: return
+        val modelName = selectedModelName ?: return
 
         btnTranscribe.isEnabled = false
         progressBar.progress = 0
-        tvProgress.text = "Extracting & decoding audio (16kHz PCM)..."
+        tvProgress.text = "Extracting Audio (16kHz PCM)..."
 
         lifecycleScope.launch(Dispatchers.Default) {
             try {
                 val samples = AudioDecoder.decodeTo16kHzFloatPcm(applicationContext, uri)
+
                 withContext(Dispatchers.Main) {
-                    tvProgress.text = "Initializing whisper context..."
+                    tvProgress.text = "Loading $modelName via Native C++..."
                 }
 
-                val ok = whisper.initModel(model.absolutePath, this@MainActivity)
-                if (!ok) {
+                val loaded = whisper.loadModelFromSdcard(modelName, this@MainActivity)
+                if (!loaded) {
                     withContext(Dispatchers.Main) {
-                        tvProgress.text = "Failed to load GGML model!"
+                        tvProgress.text = "Failed to load model from /sdcard/whisper/$modelName"
                         btnTranscribe.isEnabled = true
                     }
                     return@launch
                 }
 
                 withContext(Dispatchers.Main) {
-                    tvProgress.text = "Transcribing segments..."
+                    tvProgress.text = "Transcribing with whisper.cpp..."
                 }
 
-                val threads = Runtime.getRuntime().availableProcessors().coerceAtMost(4)
+                val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
                 val srt = whisper.transcribeToSrt(samples, threads)
 
                 whisper.freeModel()
 
                 withContext(Dispatchers.Main) {
-                    tvProgress.text = "Completed!"
+                    tvProgress.text = "Done!"
                     tvSrtResult.text = srt
                     btnTranscribe.isEnabled = true
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    tvProgress.text = "Pipeline Error: ${e.message}"
+                    tvProgress.text = "Error: ${e.message}"
                     btnTranscribe.isEnabled = true
                 }
             }
