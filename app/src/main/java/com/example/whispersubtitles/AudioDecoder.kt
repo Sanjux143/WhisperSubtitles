@@ -1,7 +1,9 @@
 package com.example.whispersubtitles
 
 import android.content.Context
-import android.media.*
+import android.media.MediaCodec
+import android.media.MediaExtractor
+import android.media.MediaFormat
 import android.net.Uri
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -30,7 +32,8 @@ object AudioDecoder {
         }
 
         extractor.selectTrack(audioTrackIndex)
-        val mime = format.getString(MediaFormat.KEY_MIME)!
+        val mime = format.getString(MediaFormat.KEY_MIME)
+            ?: throw IllegalArgumentException("MIME type missing")
         val codec = MediaCodec.createDecoderByType(mime)
         codec.configure(format, null, null, 0)
         codec.start()
@@ -45,35 +48,38 @@ object AudioDecoder {
         while (!isEOS) {
             val inIndex = codec.dequeueInputBuffer(10000)
             if (inIndex >= 0) {
-                val buf = codec.getInputBuffer(inIndex)!
-                val sampleSize = extractor.readSampleData(buf, 0)
-                if (sampleSize < 0) {
-                    codec.queueInputBuffer(inIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                    isEOS = true
-                } else {
-                    codec.queueInputBuffer(inIndex, 0, sampleSize, extractor.sampleTime, 0)
-                    extractor.advance()
+                val buf = codec.getInputBuffer(inIndex)
+                if (buf != null) {
+                    val sampleSize = extractor.readSampleData(buf, 0)
+                    if (sampleSize < 0) {
+                        codec.queueInputBuffer(inIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                        isEOS = true
+                    } else {
+                        codec.queueInputBuffer(inIndex, 0, sampleSize, extractor.sampleTime, 0)
+                        extractor.advance()
+                    }
                 }
             }
 
             var outIndex = codec.dequeueOutputBuffer(info, 10000)
             while (outIndex >= 0) {
-                val outBuf = codec.getOutputBuffer(outIndex)!
-                val chunk = ByteArray(info.size)
-                outBuf.get(chunk)
-                outBuf.clear()
+                val outBuf = codec.getOutputBuffer(outIndex)
+                if (outBuf != null && info.size > 0) {
+                    val chunk = ByteArray(info.size)
+                    outBuf.get(chunk)
+                    outBuf.clear()
 
-                val shorts = ShortArray(chunk.size / 2)
-                ByteBuffer.wrap(chunk).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shorts)
+                    val shorts = ShortArray(chunk.size / 2)
+                    ByteBuffer.wrap(chunk).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shorts)
 
-                // Downmix channels to mono & normalize [-1.0f, 1.0f]
-                val monoCount = shorts.size / channels
-                for (i in 0 until monoCount) {
-                    var sum = 0f
-                    for (c in 0 until channels) {
-                        sum += shorts[i * channels + c] / 32768.0f
+                    val monoCount = shorts.size / channels
+                    for (i in 0 until monoCount) {
+                        var sum = 0f
+                        for (c in 0 until channels) {
+                            sum += shorts[i * channels + c] / 32768.0f
+                        }
+                        pcmList.add(sum / channels)
                     }
-                    pcmList.add(sum / channels)
                 }
                 codec.releaseOutputBuffer(outIndex, false)
                 outIndex = codec.dequeueOutputBuffer(info, 0)
