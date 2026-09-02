@@ -58,7 +58,6 @@ std::string format_time_srt(int64_t t) {
     return ss.str();
 }
 
-// /sdcard/whisper ke models scan karne ka native code
 extern "C" JNIEXPORT jobjectArray JNICALL
 Java_com_example_whispersubtitles_WhisperEngine_listSdcardModels(
         JNIEnv* env, jobject thiz) {
@@ -88,7 +87,6 @@ Java_com_example_whispersubtitles_WhisperEngine_listSdcardModels(
     return array;
 }
 
-// Direct /sdcard/whisper/ se whisper.cpp load karega
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_example_whispersubtitles_WhisperEngine_loadModelFromSdcard(
         JNIEnv* env, jobject thiz, jstring model_name_str, jobject callback) {
@@ -118,7 +116,9 @@ Java_com_example_whispersubtitles_WhisperEngine_loadModelFromSdcard(
     }
 
     struct whisper_context_params cparams = whisper_context_default_params();
-    cparams.use_gpu = false;
+    // GPU ON
+    cparams.use_gpu = true;
+    cparams.flash_attn = true;
 
     g_ctx = whisper_init_from_file_with_params(full_path.c_str(), cparams);
 
@@ -138,7 +138,14 @@ Java_com_example_whispersubtitles_WhisperEngine_transcribeToSrt(
     wparams.print_progress = false;
     wparams.print_realtime = false;
     wparams.print_timestamps = false;
+    
+    // Performance tuning
     wparams.n_threads = num_threads > 0 ? num_threads : 4;
+    wparams.no_context = true;
+    wparams.single_segment = false;
+    wparams.max_tokens = 64;
+    wparams.temperature = 0.0f;
+    wparams.beam_search.beam_size = 1;
     wparams.language = "auto";
     wparams.translate = false;
 
