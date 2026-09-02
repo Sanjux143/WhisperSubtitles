@@ -12,7 +12,8 @@ class WhisperEngine {
         }
     }
 
-    external fun initModel(modelPath: String, callback: WhisperCallback): Boolean
+    external fun listSdcardModels(): Array<String>
+    external fun loadModelFromSdcard(modelName: String, callback: WhisperCallback): Boolean
     external fun transcribeToSrt(audioData: FloatArray, numThreads: Int): String
     external fun freeModel()
 }
