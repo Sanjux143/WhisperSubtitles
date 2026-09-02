@@ -1,8 +1,136 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto" android:layout_width="match_parent" android:layout_height="match_parent" android:background="#090D16" android:fillViewport="true"><LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="20dp">
-<TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Whisper Subtitles" android:textColor="#FFFFFF" android:textSize="24sp" android:textStyle="bold"/><TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="On-Device Whisper Speech-to-SRT Engine" android:textColor="#94A3B8"/>
-<androidx.cardview.widget.CardView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp" app:cardBackgroundColor="#131B2E" app:cardCornerRadius="14dp"><LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="16dp">
-<TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="SELECT MODEL" android:textColor="#64748B"/><Spinner android:id="@+id/spinnerModel" android:layout_width="match_parent" android:layout_height="48dp"/><Button android:id="@+id/btnSelectAudio" android:layout_width="match_parent" android:layout_height="52dp" android:text="Choose Media File" android:textAllCaps="false"/><TextView android:id="@+id/tvSelectedFileName" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="No file selected" android:textColor="#94A3B8" android:padding="12dp"/><Button android:id="@+id/btnGenerate" android:layout_width="match_parent" android:layout_height="52dp" android:text="Generate Subtitles" android:textAllCaps="false"/></LinearLayout></androidx.cardview.widget.CardView>
-<TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:text="LIVE CONSOLE OUTPUT" android:textColor="#64748B"/><androidx.cardview.widget.CardView android:layout_width="match_parent" android:layout_height="180dp" android:layout_marginTop="6dp" app:cardBackgroundColor="#050811"><ScrollView android:layout_width="match_parent" android:layout_height="match_parent"><TextView android:id="@+id/tvConsole" android:layout_width="match_parent" android:layout_height="wrap_content" android:padding="12dp" android:fontFamily="monospace" android:text="[Ready] Select model &amp; media file...&#10;" android:textColor="#4ADE80"/></ScrollView></androidx.cardview.widget.CardView>
-<androidx.cardview.widget.CardView android:id="@+id/cardProgress" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:visibility="gone" app:cardBackgroundColor="#131B2E"><LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="16dp"><TextView android:id="@+id/tvProgressPercent" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="0%" android:textColor="#FFFFFF" android:textSize="22sp"/><ProgressBar android:id="@+id/progressBar" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="8dp" android:max="100"/><TextView android:id="@+id/tvStatusMessage" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Waiting..." android:textColor="#94A3B8"/></LinearLayout></androidx.cardview.widget.CardView>
-<TextView android:id="@+id/tvSrtPath" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="SRT File Output: Pending..." android:textColor="#38BDF8" android:layout_marginTop="14dp"/></LinearLayout></ScrollView>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#121212"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Whisper Subtitles Native"
+        android:textColor="#FFFFFF"
+        android:textSize="20sp"
+        android:textStyle="bold" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <Spinner
+            android:id="@+id/modelSpinner"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_weight="1"
+            android:background="#1E1E1E" />
+
+        <Button
+            android:id="@+id/btnDownloadModel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:backgroundTint="#2962FF"
+            android:text="Download"
+            android:textColor="#FFFFFF" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btnPickMedia"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:backgroundTint="#2E7D32"
+            android:text="Pick Media File"
+            android:textColor="#FFFFFF" />
+
+        <Button
+            android:id="@+id/btnTranscribe"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:backgroundTint="#D84315"
+            android:enabled="false"
+            android:text="Transcribe SRT"
+            android:textColor="#FFFFFF" />
+    </LinearLayout>
+
+    <ProgressBar
+        android:id="@+id/progressBar"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="8dp"
+        android:layout_marginTop="12dp"
+        android:max="100"
+        android:progress="0"
+        android:progressTint="#2962FF" />
+
+    <TextView
+        android:id="@+id/tvProgress"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="Status: Idle"
+        android:textColor="#B0BEC5"
+        android:textSize="12sp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:text="Native Console Logs"
+        android:textColor="#90CAF9"
+        android:textStyle="bold" />
+
+    <ScrollView
+        android:id="@+id/consoleScroll"
+        android:layout_width="match_parent"
+        android:layout_height="120dp"
+        android:layout_marginTop="4dp"
+        android:background="#000000"
+        android:padding="8dp">
+
+        <TextView
+            android:id="@+id/tvConsole"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textColor="#00E676"
+            android:textSize="10sp" />
+    </ScrollView>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:text="Generated SRT Result"
+        android:textColor="#90CAF9"
+        android:textStyle="bold" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="4dp"
+        android:layout_weight="1"
+        android:background="#1E1E1E"
+        android:padding="8dp">
+
+        <TextView
+            android:id="@+id/tvSrtResult"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textColor="#FFFFFF"
+            android:textSize="12sp" />
+    </ScrollView>
+</LinearLayout>
