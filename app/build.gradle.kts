@@ -21,8 +21,9 @@ android {
                 arguments += listOf("-DANDROID_STL=c++_shared")
             }
         }
+        // GPU acceleration ke liye 64-bit ABI filter
         ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+            abiFilters += listOf("arm64-v8a")
         }
     }
 
