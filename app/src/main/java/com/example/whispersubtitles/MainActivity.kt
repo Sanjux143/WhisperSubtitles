@@ -13,7 +13,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -69,7 +68,6 @@ class MainActivity : AppCompatActivity(), WhisperCallback {
             loadSdcardModels()
         }
 
-        // Sabhi media formats support karega: MP4, MKV, MP3, M4A, AAC, WAV etc.
         btnPickMedia.setOnClickListener {
             mediaPicker.launch("*/*")
         }
@@ -157,14 +155,13 @@ class MainActivity : AppCompatActivity(), WhisperCallback {
                     return@launch
                 }
 
-                // Phone overheating rokne ke liye 4 threads limit
                 val threads = 4
                 var subtitleIndex = 1
 
                 AudioDecoder.decodeInChunks(applicationContext, uri) { chunkSamples, chunkIndex, totalEstimated ->
                     val chunkOffsetMs = chunkIndex * 30_000L
 
-                    withContext(Dispatchers.Main) {
+                    runOnUiThread {
                         val percent = if (totalEstimated > 0) ((chunkIndex + 1) * 100 / totalEstimated).coerceAtMost(100) else 0
                         progressBar.progress = percent
                         tvProgress.text = "Chunk ${chunkIndex + 1}/$totalEstimated ($percent%)"
@@ -176,17 +173,16 @@ class MainActivity : AppCompatActivity(), WhisperCallback {
                         val adjustedSrt = adjustSrtTimeOffsets(srtPart, chunkOffsetMs, subtitleIndex)
                         subtitleIndex += countSrtSegments(srtPart)
 
-                        // Real-time disk write (RAM safe)
                         FileWriter(srtFile, true).use { it.write(adjustedSrt) }
 
-                        withContext(Dispatchers.Main) {
+                        runOnUiThread {
                             tvSrtResult.append(adjustedSrt)
                             consoleScroll.post { consoleScroll.fullScroll(View.FOCUS_DOWN) }
                         }
                     }
 
-                    // Anti-Thermal Delay: 150ms sleep CPU ko thanda rakhne ke liye
-                    kotlinx.coroutines.runBlocking { delay(150) }
+                    // Anti-thermal cooldown delay
+                    Thread.sleep(150)
                     true
                 }
 
