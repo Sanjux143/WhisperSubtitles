@@ -3,10 +3,14 @@
 #include <vector>
 #include <sstream>
 #include <iomanip>
+#include <dirent.h>
+#include <sys/stat.h>
 #include <android/log.h>
 #include "whisper.h"
 
 #define TAG "WhisperNative"
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
 static struct whisper_context * g_ctx = nullptr;
 static JavaVM * g_jvm = nullptr;
@@ -54,9 +58,40 @@ std::string format_time_srt(int64_t t) {
     return ss.str();
 }
 
+// /sdcard/whisper ke models scan karne ka native code
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_example_whispersubtitles_WhisperEngine_listSdcardModels(
+        JNIEnv* env, jobject thiz) {
+    
+    std::vector<std::string> bin_files;
+    const char* dir_path = "/sdcard/whisper";
+    
+    DIR *dir = opendir(dir_path);
+    if (dir) {
+        struct dirent *ent;
+        while ((ent = readdir(dir)) != nullptr) {
+            std::string name = ent->d_name;
+            if (name.length() > 4 && name.substr(name.length() - 4) == ".bin") {
+                bin_files.push_back(name);
+            }
+        }
+        closedir(dir);
+    }
+
+    jclass strCls = env->FindClass("java/lang/String");
+    jobjectArray array = env->NewObjectArray(bin_files.size(), strCls, nullptr);
+    for (size_t i = 0; i < bin_files.size(); ++i) {
+        jstring str = env->NewStringUTF(bin_files[i].c_str());
+        env->SetObjectArrayElement(array, i, str);
+        env->DeleteLocalRef(str);
+    }
+    return array;
+}
+
+// Direct /sdcard/whisper/ se whisper.cpp load karega
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_example_whispersubtitles_WhisperEngine_initModel(
-        JNIEnv* env, jobject thiz, jstring model_path_str, jobject callback) {
+Java_com_example_whispersubtitles_WhisperEngine_loadModelFromSdcard(
+        JNIEnv* env, jobject thiz, jstring model_name_str, jobject callback) {
     
     if (g_callback_obj) env->DeleteGlobalRef(g_callback_obj);
     g_callback_obj = env->NewGlobalRef(callback);
@@ -67,12 +102,25 @@ Java_com_example_whispersubtitles_WhisperEngine_initModel(
 
     whisper_log_set(whisper_log_cb, nullptr);
 
-    const char *model_path = env->GetStringUTFChars(model_path_str, nullptr);
+    const char *model_name = env->GetStringUTFChars(model_name_str, nullptr);
+    std::string full_path = "/sdcard/whisper/" + std::string(model_name);
+    env->ReleaseStringUTFChars(model_name_str, model_name);
+
+    struct stat buffer;
+    if (stat(full_path.c_str(), &buffer) != 0) {
+        send_native_log(("File not accessible: " + full_path).c_str());
+        return JNI_FALSE;
+    }
+
+    if (g_ctx) {
+        whisper_free(g_ctx);
+        g_ctx = nullptr;
+    }
+
     struct whisper_context_params cparams = whisper_context_default_params();
-    
-    if (g_ctx) whisper_free(g_ctx);
-    g_ctx = whisper_init_from_file_with_params(model_path, cparams);
-    env->ReleaseStringUTFChars(model_path_str, model_path);
+    cparams.use_gpu = false;
+
+    g_ctx = whisper_init_from_file_with_params(full_path.c_str(), cparams);
 
     return g_ctx != nullptr;
 }
