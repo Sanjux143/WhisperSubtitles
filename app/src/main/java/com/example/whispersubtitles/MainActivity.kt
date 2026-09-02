@@ -13,6 +13,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -40,7 +41,7 @@ class MainActivity : AppCompatActivity(), WhisperCallback {
             selectedMediaUri = uri
             selectedMediaName = getFileNameFromUri(uri)
             btnTranscribe.isEnabled = selectedModelName != null
-            appendConsole("Media selected: $selectedMediaName")
+            appendConsole("Selected: $selectedMediaName")
         }
     }
 
@@ -68,12 +69,13 @@ class MainActivity : AppCompatActivity(), WhisperCallback {
             loadSdcardModels()
         }
 
+        // Sabhi media formats support karega: MP4, MKV, MP3, M4A, AAC, WAV etc.
         btnPickMedia.setOnClickListener {
             mediaPicker.launch("*/*")
         }
 
         btnTranscribe.setOnClickListener {
-            startTranscription()
+            startChunkedPipeline()
         }
     }
 
@@ -96,7 +98,7 @@ class MainActivity : AppCompatActivity(), WhisperCallback {
 
         if (models.isEmpty()) {
             tvProgress.text = "No models found in /sdcard/whisper/"
-            appendConsole("Put ggml-*.bin inside /sdcard/whisper/ and tap RELOAD")
+            appendConsole("Put ggml-*.bin in /sdcard/whisper/ & press RELOAD")
             modelSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, listOf("Empty: /sdcard/whisper"))
             selectedModelName = null
             btnTranscribe.isEnabled = false
@@ -113,7 +115,7 @@ class MainActivity : AppCompatActivity(), WhisperCallback {
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
         selectedModelName = models[0]
-        tvProgress.text = "Found ${models.size} model(s) in /sdcard/whisper"
+        tvProgress.text = "Found ${models.size} model(s)"
         btnTranscribe.isEnabled = selectedMediaUri != null
     }
 
@@ -128,52 +130,75 @@ class MainActivity : AppCompatActivity(), WhisperCallback {
         return name.substringBeforeLast(".")
     }
 
-    private fun startTranscription() {
+    private fun startChunkedPipeline() {
         val uri = selectedMediaUri ?: return
         val modelName = selectedModelName ?: return
 
         btnTranscribe.isEnabled = false
         progressBar.progress = 0
-        tvProgress.text = "Extracting Audio (16kHz PCM)..."
+        tvSrtResult.text = ""
+        tvProgress.text = "Starting Stream Pipeline..."
+
+        val srtFile = File("/sdcard/whisper", "$selectedMediaName.srt")
+        if (srtFile.exists()) srtFile.delete()
 
         lifecycleScope.launch(Dispatchers.Default) {
             try {
-                val samples = AudioDecoder.decodeTo16kHzFloatPcm(applicationContext, uri)
-
                 withContext(Dispatchers.Main) {
-                    tvProgress.text = "Loading $modelName via Native C++..."
+                    tvProgress.text = "Loading Model into RAM..."
                 }
 
                 val loaded = whisper.loadModelFromSdcard(modelName, this@MainActivity)
                 if (!loaded) {
                     withContext(Dispatchers.Main) {
-                        tvProgress.text = "Failed to load model from /sdcard/whisper/$modelName"
+                        tvProgress.text = "Failed to load model /sdcard/whisper/$modelName"
                         btnTranscribe.isEnabled = true
                     }
                     return@launch
                 }
 
-                withContext(Dispatchers.Main) {
-                    tvProgress.text = "Transcribing with whisper.cpp..."
-                }
+                // Phone overheating rokne ke liye 4 threads limit
+                val threads = 4
+                var subtitleIndex = 1
 
-                val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
-                val srtContent = whisper.transcribeToSrt(samples, threads)
+                AudioDecoder.decodeInChunks(applicationContext, uri) { chunkSamples, chunkIndex, totalEstimated ->
+                    val chunkOffsetMs = chunkIndex * 30_000L
+
+                    withContext(Dispatchers.Main) {
+                        val percent = if (totalEstimated > 0) ((chunkIndex + 1) * 100 / totalEstimated).coerceAtMost(100) else 0
+                        progressBar.progress = percent
+                        tvProgress.text = "Chunk ${chunkIndex + 1}/$totalEstimated ($percent%)"
+                    }
+
+                    val srtPart = whisper.transcribeToSrt(chunkSamples, threads)
+
+                    if (srtPart.isNotBlank()) {
+                        val adjustedSrt = adjustSrtTimeOffsets(srtPart, chunkOffsetMs, subtitleIndex)
+                        subtitleIndex += countSrtSegments(srtPart)
+
+                        // Real-time disk write (RAM safe)
+                        FileWriter(srtFile, true).use { it.write(adjustedSrt) }
+
+                        withContext(Dispatchers.Main) {
+                            tvSrtResult.append(adjustedSrt)
+                            consoleScroll.post { consoleScroll.fullScroll(View.FOCUS_DOWN) }
+                        }
+                    }
+
+                    // Anti-Thermal Delay: 150ms sleep CPU ko thanda rakhne ke liye
+                    kotlinx.coroutines.runBlocking { delay(150) }
+                    true
+                }
 
                 whisper.freeModel()
 
-                // Save SRT inside /sdcard/whisper/
-                val srtFile = File("/sdcard/whisper", "$selectedMediaName.srt")
-                FileWriter(srtFile).use { writer ->
-                    writer.write(srtContent)
-                }
-
                 withContext(Dispatchers.Main) {
                     tvProgress.text = "Completed & Saved!"
-                    tvSrtResult.text = srtContent
-                    appendConsole("SRT File Saved: ${srtFile.absolutePath}")
+                    progressBar.progress = 100
+                    appendConsole("Full SRT saved at: ${srtFile.absolutePath}")
                     btnTranscribe.isEnabled = true
                 }
+
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     tvProgress.text = "Error: ${e.message}"
@@ -183,16 +208,67 @@ class MainActivity : AppCompatActivity(), WhisperCallback {
         }
     }
 
+    private fun adjustSrtTimeOffsets(srtText: String, offsetMs: Long, startCounter: Int): String {
+        val lines = srtText.trim().split("\n")
+        val out = StringBuilder()
+        var currentCounter = startCounter
+
+        var i = 0
+        while (i < lines.size) {
+            val line = lines[i].trim()
+            if (line.matches(Regex("^\\d+$"))) {
+                out.append(currentCounter++).append("\n")
+                if (i + 1 < lines.size && lines[i + 1].contains("-->")) {
+                    i++
+                    val timeLine = lines[i]
+                    val parts = timeLine.split("-->")
+                    if (parts.size == 2) {
+                        val start = parseTime(parts[0].trim()) + offsetMs
+                        val end = parseTime(parts[1].trim()) + offsetMs
+                        out.append(formatTime(start)).append(" --> ").append(formatTime(end)).append("\n")
+                    } else {
+                        out.append(timeLine).append("\n")
+                    }
+                }
+            } else {
+                out.append(lines[i]).append("\n")
+            }
+            i++
+        }
+        return out.toString()
+    }
+
+    private fun countSrtSegments(srtText: String): Int {
+        return Regex("^\\d+$", RegexOption.MULTILINE).findAll(srtText).count()
+    }
+
+    private fun parseTime(time: String): Long {
+        return try {
+            val parts = time.split(":", ",")
+            val h = parts[0].toLong()
+            val m = parts[1].toLong()
+            val s = parts[2].toLong()
+            val ms = parts[3].toLong()
+            (h * 3600 + m * 60 + s) * 1000 + ms
+        } catch (e: Exception) { 0L }
+    }
+
+    private fun formatTime(timeMs: Long): String {
+        var ms = timeMs
+        val hr = ms / (3600 * 1000)
+        ms %= (3600 * 1000)
+        val min = ms / (60 * 1000)
+        ms %= (60 * 1000)
+        val sec = ms / 1000
+        ms %= 1000
+        return String.format("%02d:%02d:%02d,%03d", hr, min, sec, ms)
+    }
+
     override fun onNativeLog(line: String) {
         runOnUiThread { appendConsole(line.trim()) }
     }
 
-    override fun onProgress(progress: Int) {
-        runOnUiThread {
-            progressBar.progress = progress
-            tvProgress.text = "Transcribing: $progress%"
-        }
-    }
+    override fun onProgress(progress: Int) {}
 
     private fun appendConsole(text: String) {
         if (text.isEmpty()) return
