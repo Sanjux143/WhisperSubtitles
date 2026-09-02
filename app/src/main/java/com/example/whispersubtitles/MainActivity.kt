@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.provider.OpenableColumns
 import android.provider.Settings
 import android.view.View
 import android.widget.*
@@ -15,12 +16,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileWriter
 
 class MainActivity : AppCompatActivity(), WhisperCallback {
 
     private val whisper = WhisperEngine()
     private var selectedMediaUri: Uri? = null
     private var selectedModelName: String? = null
+    private var selectedMediaName: String = "transcription"
 
     private lateinit var modelSpinner: Spinner
     private lateinit var btnReload: Button
@@ -35,8 +38,9 @@ class MainActivity : AppCompatActivity(), WhisperCallback {
     private val mediaPicker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
             selectedMediaUri = uri
+            selectedMediaName = getFileNameFromUri(uri)
             btnTranscribe.isEnabled = selectedModelName != null
-            appendConsole("Media selected: $uri")
+            appendConsole("Media selected: $selectedMediaName")
         }
     }
 
@@ -85,11 +89,9 @@ class MainActivity : AppCompatActivity(), WhisperCallback {
     }
 
     private fun loadSdcardModels() {
-        // Ensure directory exists on sdcard
         val dir = File("/sdcard/whisper")
         if (!dir.exists()) dir.mkdirs()
 
-        // Native C++ function directly calls opendir("/sdcard/whisper")
         val models = whisper.listSdcardModels()
 
         if (models.isEmpty()) {
@@ -113,6 +115,17 @@ class MainActivity : AppCompatActivity(), WhisperCallback {
         selectedModelName = models[0]
         tvProgress.text = "Found ${models.size} model(s) in /sdcard/whisper"
         btnTranscribe.isEnabled = selectedMediaUri != null
+    }
+
+    private fun getFileNameFromUri(uri: Uri): String {
+        var name = "audio_subtitles"
+        contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (nameIndex != -1 && cursor.moveToFirst()) {
+                name = cursor.getString(nameIndex)
+            }
+        }
+        return name.substringBeforeLast(".")
     }
 
     private fun startTranscription() {
@@ -145,13 +158,20 @@ class MainActivity : AppCompatActivity(), WhisperCallback {
                 }
 
                 val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
-                val srt = whisper.transcribeToSrt(samples, threads)
+                val srtContent = whisper.transcribeToSrt(samples, threads)
 
                 whisper.freeModel()
 
+                // Save SRT inside /sdcard/whisper/
+                val srtFile = File("/sdcard/whisper", "$selectedMediaName.srt")
+                FileWriter(srtFile).use { writer ->
+                    writer.write(srtContent)
+                }
+
                 withContext(Dispatchers.Main) {
-                    tvProgress.text = "Done!"
-                    tvSrtResult.text = srt
+                    tvProgress.text = "Completed & Saved!"
+                    tvSrtResult.text = srtContent
+                    appendConsole("SRT File Saved: ${srtFile.absolutePath}")
                     btnTranscribe.isEnabled = true
                 }
             } catch (e: Exception) {
